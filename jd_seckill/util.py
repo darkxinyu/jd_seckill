@@ -148,7 +148,9 @@ class Email():
         if global_config.getRaw('messenger', 'email_enable') == 'false':
             return
 
-        smtpObj = smtplib.SMTP()
+        ssl = global_config.getRaw('messenger', 'email_ssl') == 'true'
+        smtpObj = smtplib.SMTP_SSL() if ssl else smtplib.SMTP()
+
         # 没传会自动判断 判断不出来默认QQ邮箱
         if mail_host:
             self.mail_host = mail_host
@@ -164,8 +166,13 @@ class Email():
             self.mail_host = 'smtp.qq.com'
         self.mail_user = mail_user
         self.is_login = False
+
+        default_port = 465 if ssl else 25
+        if len(self.mail_host.split(':')) == 2:
+            default_port = None
+
         try:
-            smtpObj.connect(mail_host, 25)
+            smtpObj.connect(mail_host, default_port)
             smtpObj.login(mail_user, mail_pwd)
             self.is_login = True
         except Exception as e:

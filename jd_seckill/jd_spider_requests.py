@@ -8,6 +8,7 @@ import functools
 import json
 import os
 import pickle
+import sys
 import asyncio
 
 from lxml import etree
@@ -36,8 +37,8 @@ class SpiderSession:
     """
     def __init__(self):
         self.cookies_dir_path = "cookies/"
+        self.profile = global_config.getRaw('config', 'profile')
         self.user_agent = global_config.getRaw('config', 'default_user_agent')
-
         self.session = self._init_session()
 
     def _init_session(self):
@@ -81,23 +82,27 @@ class SpiderSession:
         cookies_file = ''
         if not os.path.exists(self.cookies_dir_path):
             return False
-        for name in os.listdir(self.cookies_dir_path):
-            if name.endswith(".cookies"):
-                cookies_file = '{}{}'.format(self.cookies_dir_path, name)
-                break
-        if cookies_file == '':
+        # for name in os.listdir(self.cookies_dir_path):
+        #     if name.endswith(".cookies"):
+        #         cookies_file = '{}{}'.format(self.cookies_dir_path, name)
+        #         break
+        cookies_file = '{}{}.cookies'.format(self.cookies_dir_path, self.profile)
+        # if cookies_file == '':
+        #     return False
+        try:
+            with open(cookies_file, 'rb') as f:
+                local_cookies = pickle.load(f)
+            self.set_cookies(local_cookies)
+        except:
             return False
-        with open(cookies_file, 'rb') as f:
-            local_cookies = pickle.load(f)
-        self.set_cookies(local_cookies)
 
-    def save_cookies_to_local(self, cookie_file_name):
+    def save_cookies_to_local(self):
         """
         保存Cookie到本地
         :param cookie_file_name: 存放Cookie的文件名称
         :return:
         """
-        cookies_file = '{}{}.cookies'.format(self.cookies_dir_path, cookie_file_name)
+        cookies_file = '{}{}.cookies'.format(self.cookies_dir_path, self.profile)
         directory = os.path.dirname(cookies_file)
         if not os.path.exists(directory):
             os.makedirs(directory)
@@ -185,8 +190,8 @@ class QrLogin:
         logger.info('二维码获取成功，请打开京东APP扫描')
 
         open_image(add_bg_for_qr(self.qrcode_img_file))
-        if global_config.getRaw('messenger', 'email_enable') == 'true':
-            email.send('二维码获取成功，请打开京东APP扫描', "<img src='cid:qr_code.png'>", [email.mail_user], 'qr_code.png')
+        # if global_config.getRaw('messenger', 'email_enable') == 'true':
+        #     email.send('二维码获取成功，请打开京东APP扫描', "<img src='cid:qr_code.png'>", [email.mail_user], 'qr_code.png')
         return True
 
     def _get_qrcode_ticket(self):
@@ -277,6 +282,7 @@ class JdTdudfp:
     def __init__(self, sp: SpiderSession):
         self.cookies = sp.get_cookies()
         self.user_agent = sp.get_user_agent()
+        self.profile = global_config.getRaw('config', 'profile')
 
         self.is_init = False
         self.jd_tdudfp = None
@@ -297,7 +303,8 @@ class JdTdudfp:
         try:
             from pyppeteer import launch
             url = "https://www.jd.com/"
-            browser = await launch(userDataDir=".user_data", args=['--start-maximized',
+            userDataDir = ".user_data/%s" % self.profile
+            browser = await launch(userDataDir=userDataDir, args=['--start-maximized',
                                                                    '--no-sandbox', '--disable-setuid-sandbox'])
             page = await browser.newPage()
             await page.setViewport({"width": 1920, "height": 1080})
@@ -324,10 +331,27 @@ class JdTdudfp:
             logger.info("page_title：【%s】, page_url：【%s】" % (await page.title(), page.url))
             a_href = await page.querySelectorAllEval(".goods_item_link", "(elements) => elements[0].href")
             await page.goto(a_href)
-            await page.waitFor("#InitCartUrl")
+            try:
+                await page.waitFor("#InitCartUrl")
+            except:
+                pass
+            await page.waitFor(".product-intro")
             logger.info("page_title：【%s】, page_url：【%s】" % (await page.title(), page.url))
             a_href = await page.querySelectorAllEval("#InitCartUrl", "(elements) => elements[0].href")
+            if not (a_href and len(a_href) > 0):
+                href = None
+                for _ in range(5):
+                    href = await page.evaluate("() => {try{return pageConfig.product.addToCartUrl}catch(e){}}")
+                    if href and len(href) > 0:
+                        if href.startswith('//'):
+                            href = 'https:' + href
+                        logger.info("href: %s" % href)
+                        break
+                    else:
+                        await asyncio.sleep(1)
+                a_href = href
             await page.goto(a_href)
+
             await page.waitFor(".btn-addtocart")
             logger.info("page_title：【%s】, page_url：【%s】" % (await page.title(), page.url))
             a_href = await page.querySelectorAllEval(".btn-addtocart", "(elements) => elements[0].href")
@@ -339,17 +363,24 @@ class JdTdudfp:
             await page.waitFor("#sumPayPriceId")
             logger.info("page_title：【%s】, page_url：【%s】" % (await page.title(), page.url))
 
-            for _ in range(30):
-                jd_tdudfp = await page.evaluate("() => {try{return _JdTdudfp}catch(e){}}")
-                if jd_tdudfp and len(jd_tdudfp) > 0:
+            for _ in range(10):
+                jd_tdudfp = await page.evaluate("() => {try{return { k: Object.keys(_JdTdudfp || {}), eid: _JdTdudfp.eid, fp: _JdTdudfp.fp }}catch(e){}}")
+                logger.info("jd_tdudfp：【%s】" % jd_tdudfp)
+                if jd_tdudfp and "eid" in jd_tdudfp and jd_tdudfp["eid"] and len(jd_tdudfp["eid"]) > 0:
                     logger.info("jd_tdudfp：【%s】" % jd_tdudfp)
                     break
                 else:
                     await asyncio.sleep(1)
+            if not (jd_tdudfp and "eid" in jd_tdudfp and jd_tdudfp["eid"] and len(jd_tdudfp["eid"]) > 0):
+                raise Exception("自动获取JdTdudfp为空值")
+                # logger.info("自动获取JdTdudfp为空值，将退出！")
 
             await page.close()
         except Exception as e:
-            logger.info("自动获取JdTdudfp发生异常，将从配置文件读取！")
+            logger.info("自动获取JdTdudfp发生异常，将从配置文件读取！", e)
+            jd_tdudfp = None
+            # logger.info("自动获取JdTdudfp发生异常，将退出！", e)
+            # sys.exit(1)
         return jd_tdudfp
 
 
@@ -386,7 +417,7 @@ class JdSeckill(object):
 
         if self.qrlogin.is_login:
             self.nick_name = self.get_username()
-            self.spider_session.save_cookies_to_local(self.nick_name)
+            self.spider_session.save_cookies_to_local()
         else:
             raise SKException("二维码登录失败！")
 
@@ -706,6 +737,8 @@ class JdSeckill(object):
             if global_config.getRaw('messenger', 'server_chan_enable') == 'true':
                 success_message = "抢购成功，订单号:{}, 总价:{}, 电脑端付款链接:{}".format(order_id, total_money, pay_url)
                 send_wechat(success_message)
+                # 抢购成功后结束程序
+                sys.exit(0)
             return True
         else:
             logger.info('抢购失败，返回信息:{}'.format(resp_json))

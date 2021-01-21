@@ -1,16 +1,20 @@
 import logging
 import logging.handlers
+from .config import global_config
+
 '''
 日志模块
 '''
-LOG_FILENAME = 'jd_seckill.log'
+LOG_FILENAME = '%s.log' % global_config.getRaw('config', 'profile')
 logger = logging.getLogger()
 
 
 def set_logger():
     logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(process)d-%(threadName)s - '
-                                  '%(pathname)s[line:%(lineno)d] - %(levelname)s: %(message)s')
+    # formatter = logging.Formatter('%(asctime)s - %(process)d-%(threadName)s - '
+    #                               '%(pathname)s[line:%(lineno)d] - %(levelname)s: %(message)s')
+    formatter = logging.Formatter('[%(asctime)s][%(process)d][%(threadName)s]'
+    '[%(filename)s:%(lineno)d][%(levelname)s] %(message)s')
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
